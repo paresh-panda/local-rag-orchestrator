@@ -1,5 +1,6 @@
-
 services:
+
+  # ── Ollama LLM runtime ──
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -15,6 +16,7 @@ services:
               count: 1
               capabilities: [gpu]
 
+  # ── RAG pipeline ──
   pdf-engine:
     build: .
     container_name: pdf-insights-engine
@@ -29,12 +31,40 @@ services:
       - PYTHONUNBUFFERED=1
       - DEBUG=True
 
-  # NEW: The dedicated test service
+  # ── FastAPI — talks to pdf-engine's shared src/ and db/ ──
+  api:
+    build:
+      context: ./rag_chat/api
+    container_name: pdf-insights-api
+    depends_on:
+      - ollama
+      - pdf-engine
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./db:/app/db        # shared vector DB with pdf-engine
+      - ./src:/app/src      # shared RAG source code (read-only)
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+
+  # ── React UI — talks only to api ──
+  frontend:
+    build:
+      context: ./rag_chat/frontend
+    container_name: pdf-insights-ui
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+  # ── Tests ──
   tests:
     build: .
     volumes:
       - ./src:/app/src
       - ./tests:/app/tests
-      # We map the local db folder to the test container so tests can run
-      - ./db:/app/db 
+      - ./db:/app/db
     command: ["pytest", "-v", "tests/"]
