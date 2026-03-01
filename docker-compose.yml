@@ -1,0 +1,40 @@
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  pdf-engine:
+    build: .
+    container_name: pdf-insights-engine
+    depends_on:
+      - ollama
+    volumes:
+      - ./db:/app/db
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - PYTHONUNBUFFERED=1
+      - DEBUG=True
+
+  # NEW: The dedicated test service
+  tests:
+    build: .
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      # We map the local db folder to the test container so tests can run
+      - ./db:/app/db 
+    command: ["pytest", "-v", "tests/"]

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+venv/
+.env
+db/
+ollama_data/
+*.log
+.DS_Store
+.token
+data
+Help
