@@ -1,64 +1,30 @@
 """
 rag_chat/api/api.py
-FastAPI layer — src/ and db/ are mounted in from the pdf-engine volume,
-so this container shares the exact same RAG code and vector DB.
 """
-
 import os
 import sys
+import json
+import httpx
 
-# src/ is mounted at /app/src via docker-compose volume
 sys.path.insert(0, "/app/src")
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List
-import httpx
 
 app = FastAPI(title="PDF Insights API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://frontend:80"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Plug in your RAG chain ────────────────────────────────────────────
-# Because src/ is mounted from the host, you can import directly:
-#
-# OPTION A — LangChain:
-# from your_rag_module import rag_chain
-# def get_answer(question, history):
-#     result = rag_chain.invoke({
-#         "question": question,
-#         "chat_history": [(m.role, m.content) for m in history],
-#     })
-#     return result["answer"]
-#
-# OPTION B — LlamaIndex:
-# from your_rag_module import query_engine
-# def get_answer(question, history):
-#     return str(query_engine.query(question))
-#
-# OPTION C — Raw Ollama (default, works out of the box):
-
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+OLLAMA_HOST  = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
-
-async def get_answer(question: str, history: list) -> str:
-    messages = [{"role": m.role, "content": m.content} for m in history]
-    messages.append({"role": "user", "content": question})
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{OLLAMA_HOST}/api/chat",
-            json={"model": OLLAMA_MODEL, "messages": messages, "stream": False},
-        )
-        resp.raise_for_status()
-        return resp.json()["message"]["content"]
-
-# ── Models ────────────────────────────────────────────────────────────
 
 class Message(BaseModel):
     role: str
@@ -67,21 +33,48 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
-class ChatResponse(BaseModel):
-    answer: str
-
-# ── Routes ────────────────────────────────────────────────────────────
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/chat")
 async def chat(req: ChatRequest):
     if not req.messages:
         raise HTTPException(status_code=400, detail="No messages provided")
-    try:
-        answer = await get_answer(req.messages[-1].content, req.messages[:-1])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    return ChatResponse(answer=answer)
+
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    async def stream():
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream(
+                    "POST",
+                    f"{OLLAMA_HOST}/api/chat",
+                    json={"model": OLLAMA_MODEL, "messages": messages, "stream": True},
+                ) as response:
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            token = chunk.get("message", {}).get("content", "")
+                            if token:
+                                yield f"data: {json.dumps({'token': token})}\n\n"
+                            if chunk.get("done", False):
+                                yield "data: [DONE]\n\n"
+                                return
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        }
+    )

@@ -26,6 +26,7 @@ services:
       - ./db:/app/db
       - ./src:/app/src
       - ./scripts:/app/scripts
+      - ./input:/app/data
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - PYTHONUNBUFFERED=1
