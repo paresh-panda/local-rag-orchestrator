@@ -48,6 +48,7 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - PYTHONUNBUFFERED=1
+      - RELEVANCE_CUTOFF=0.45
     restart: unless-stopped
 
   # ── React UI — talks only to api ──

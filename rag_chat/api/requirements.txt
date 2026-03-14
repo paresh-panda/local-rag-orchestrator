@@ -1,7 +1,10 @@
 fastapi
 uvicorn[standard]
 httpx
-# Add any RAG-specific deps your src/ code needs, e.g.:
-# langchain
-# langchain-community
-# llama-index
+# Must match rag_engine.py imports exactly
+langchain
+langchain-community
+langchain-ollama
+langchain-chroma
+chromadb
+ 
